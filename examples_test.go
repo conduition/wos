@@ -81,6 +81,11 @@ func (rs RemoteSigner) SignRequest(
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("received status code %d from remote signer", resp.StatusCode)
+	}
+
 	return io.ReadAll(resp.Body)
 }
 

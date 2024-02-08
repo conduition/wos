@@ -2,13 +2,17 @@
 
 API client for the Wallet of Satoshi Bitcoin Lightning app.
 
-[Wallet of Satoshi](https://walletofsatoshi.com/) is a custodial Bitcoin Lightning wallet app. It is effectively a [web-wallet], because the signing keys are actually hosted on WoS servers. By using WoS, users trade security for ease-of-use. WoS is well known for being a very beginner-friendly Lightning wallet, due largely to this trade-off.
+[Wallet of Satoshi](https://walletofsatoshi.com/) is a custodial Bitcoin Lightning wallet app. It is effectively a [web-wallet](https://www.whatisbitcoin.com/learn/what-is-a-web-wallet), because the signing keys are actually hosted on WoS servers, while their mobile app is just a thin API client around their backend sevice.
 
-Since WoS is a no-KYC no-signup-required web-wallet, it is very easy to reverse-engineer their API for programmatic use. This library is a Golang package which encapsulates their v1 REST API.
+By using WoS, Bitcoiners trade security for ease-of-use. WoS is well known for being a very beginner-friendly Lightning wallet, due largely to this trade-off. WoS can run off with your money, but you also don't have to worry about running a node, managing channels, updating software, and so forth.
+
+Since WoS is a no-KYC no-signup-required web-wallet, it is very easy to reverse-engineer their API for programmatic use. New wallets can be created on-the-fly with no API credentials needed. Existing wallets can be accessed using simple API credentials.
+
+This library is a Golang package which encapsulates the WoS v1 REST API.
 
 ## Usage
 
-The primary API revolves around the `Wallet` type, which provides a full interface to the WoS API, including creating invoices and sending payments both on-chain and over Lightning.
+The `Wallet` struct type provides a full interface to the WoS API, including creating invoices and sending payments both on-chain and over Lightning.
 
 ```golang
 package main
@@ -74,9 +78,9 @@ The token is passed as a header with every HTTP request to the WoS API, while th
 
 The secret-signature is only required for POST requests which change wallet state - such as creating or paying invoices, GET requests - such as fetching balance or payment history - require only the _API token._ This means a WoS API client can be segregated into a `Reader` and a `Signer`.
 
-A `Reader` can view a WoS account's balances and ongoing payments in real-time, while A `Signer` is an interface type which can be a simple wrapper around the API Secret, or the API secret could live offline or on a more secure machine which validates & signs POST requests, enforcing arbitrary user-defined rules (e.g. only allow max $50 per purchase, or max $1000 per day, etc).
+A `Reader` can view a WoS account's balances and ongoing payments in real-time, while A `Signer` is an interface type which can be a simple wrapper around the API Secret, or the API secret could live offline or on a more secure machine which validates & signs POST requests, enforcing arbitrary user-defined rules (e.g. only allow max $50 per purchase, or max $1000 per day, etc). Put both together and you get a `Wallet`.
 
-The `wos` package fully supports this kind of architecture. For example, consider this example with a `Signer` which lives on a remote machine. Signatures are requested via HTTP POST requests.
+The `wos` package fully supports this kind of architecture. For example, consider this example with a `Signer` which lives on a remote machine. Signatures are fetched via HTTP POST requests.
 
 ```golang
 package main
@@ -120,6 +124,11 @@ func (rs RemoteSigner) SignRequest(
     return nil, err
   }
   defer resp.Body.Close()
+
+  if resp.StatusCode != 200 {
+    return nil, fmt.Errorf("received status code %d from remote signer", resp.StatusCode)
+  }
+
   return io.ReadAll(resp.Body)
 }
 
