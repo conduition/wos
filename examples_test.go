@@ -46,10 +46,39 @@ func ExampleCredentials_OpenWallet() {
 		panic(err)
 	}
 
-	fmt.Println(wallet.LightningAddress())
+	fmt.Println(wallet.LightningAddress().String())
 
 	// output:
 	// dorsalpuma54@walletofsatoshi.com
+}
+
+func ExampleWallet_PayLightningAddress() {
+	creds := wos.Credentials{
+		APIToken:  "edcc867c-96ff-4b0d-ba68-165c16071de0",
+		APISecret: "91ul0rDKV1gANhQWWyEXhdWaSa6aQwAF",
+	}
+
+	ctx := context.Background()
+	wallet, err := creds.OpenWallet(ctx, nil)
+	if err != nil {
+		panic(err)
+	}
+
+	// smallwillow98@walletofsatoshi.com
+	// API token:  6edf02b8-d4e9-4640-b7e4-90bc97f476ab
+	// API secret: sgN5hn2RibvSba1vv260NvwnwVy0oiuh
+
+	lnAddress, err := wos.ParseLightningAddress("smallwillow98@walletofsatoshi.com")
+	if err != nil {
+		panic(err)
+	}
+
+	payment, err := wallet.PayLightningAddress(ctx, lnAddress, "", 0.00000001)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(payment.Status)
 }
 
 type RemoteSigner struct {

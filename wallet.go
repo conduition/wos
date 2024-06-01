@@ -18,6 +18,10 @@ import (
 // BaseURL is the API URL for the Wallet of Satoshi API.
 const BaseURL = "https://www.livingroomofsatoshi.com"
 
+// ErrOutsideSendableRange is returned when sending to a lightning address, but the amount
+// the caller asks to send is outside the range accepted by the receiver.
+var ErrOutsideSendableRange = errors.New("amount to send to LN address is outside the recipient's accepted range")
+
 type errorResponse struct {
 	Message string
 }
@@ -45,6 +49,14 @@ func checkHTTPResponse(resp *http.Response) error {
 	}
 
 	return err
+}
+
+func fromMillisat(sat uint64) float64 {
+	return float64(sat) / 100_000_000.0 / 1_000.0
+}
+
+func toMillisat(amount float64) uint64 {
+	return uint64(amount * 100_000_000 * 1_000)
 }
 
 // Credentials represents a full set of credentials for a WoS wallet.
@@ -102,7 +114,7 @@ type Wallet struct {
 	signer           Signer
 	httpClient       *http.Client
 	onChainAddress   string
-	lightningAddress string
+	lightningAddress LightningAddress
 }
 
 // OpenWallet opens an existing wallet using a separate [Reader] and [Signer].
@@ -115,12 +127,17 @@ func OpenWallet(ctx context.Context, reader *Reader, signer Signer) (*Wallet, er
 		return nil, fmt.Errorf("OpenWallet: %w", err)
 	}
 
+	lnAddress, err := ParseLightningAddress(addresses.Lightning)
+	if err != nil {
+		return nil, fmt.Errorf("OpenWallet: %w", err)
+	}
+
 	wallet := &Wallet{
 		reader:           reader,
 		signer:           signer,
 		httpClient:       reader.httpClient,
 		onChainAddress:   addresses.OnChain,
-		lightningAddress: addresses.Lightning,
+		lightningAddress: lnAddress,
 	}
 
 	return wallet, nil
@@ -165,6 +182,11 @@ func CreateWallet(ctx context.Context, httpClient *http.Client) (*Wallet, *Crede
 		return nil, nil, fmt.Errorf("error decoding CreateWallet response: %w", err)
 	}
 
+	lnAddress, err := ParseLightningAddress(respStruct.LightningAddress)
+	if err != nil {
+		return nil, nil, fmt.Errorf("CreateWallet: %w", err)
+	}
+
 	creds := &Credentials{
 		APISecret: respStruct.APISecret,
 		APIToken:  respStruct.APIToken,
@@ -175,14 +197,14 @@ func CreateWallet(ctx context.Context, httpClient *http.Client) (*Wallet, *Crede
 		signer:           creds.SimpleSigner(),
 		httpClient:       httpClient,
 		onChainAddress:   respStruct.OnChainAddress,
-		lightningAddress: respStruct.LightningAddress,
+		lightningAddress: lnAddress,
 	}
 
 	return wallet, creds, nil
 }
 
 // LightningAddress returns the wallet's static Lightning Address.
-func (wallet *Wallet) LightningAddress() string {
+func (wallet *Wallet) LightningAddress() LightningAddress {
 	return wallet.lightningAddress
 }
 
@@ -387,6 +409,64 @@ func (wallet *Wallet) PayInvoice(ctx context.Context, invoice, description strin
 		Description: description,
 		Amount:      amount,
 	})
+}
+
+// PayLightningAddress executes a payment of the given BTC amount to a
+// given lightning address. The description is stored in the WoS payment history.
+//
+// Returns ErrOutsideSendableRange if the amount to be sent is outside the receiver's
+// acceptable min/max sendable range.
+//
+// Under the hood, this uses the WoS API to proxy your request to [LightningAddress.Domain],
+// so that the recipient does not see your IP address.
+func (wallet *Wallet) PayLightningAddress(
+	ctx context.Context,
+	lnAddress LightningAddress,
+	description string,
+	amount float64,
+) (*Payment, error) {
+	respData, err := wallet.PostRequest(ctx, "/api/v1/wallet/lnurl", map[string]any{
+		"address": lnAddress.LNURL(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("PayLightningAddress: %w", err)
+	}
+
+	var lnPayResponseBody struct {
+		Callback    string `json:"callback"`
+		MaxSendable uint64 `json:"maxSendable"`
+		MinSendable uint64 `json:"minSendable"`
+	}
+
+	if err := json.Unmarshal(respData, &lnPayResponseBody); err != nil {
+		return nil, fmt.Errorf("PayLightningAddress: invalid response JSON: %w", err)
+	}
+
+	if maxSendable := fromMillisat(lnPayResponseBody.MaxSendable); amount > maxSendable {
+		return nil, fmt.Errorf(
+			"PayLightningAddress: %w: exceeds maxSendable (%f BTC)",
+			ErrOutsideSendableRange, maxSendable,
+		)
+	} else if minSendable := fromMillisat(lnPayResponseBody.MinSendable); amount < minSendable {
+		return nil, fmt.Errorf(
+			"PayLightningAddress: %w: exceeds minSendable (%f BTC)",
+			ErrOutsideSendableRange, minSendable,
+		)
+	}
+
+	respData, err = wallet.PostRequest(ctx, "/api/v1/wallet/lnPay", map[string]any{
+		"amount":   toMillisat(amount),
+		"callback": lnPayResponseBody.Callback,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("PayLightningAddress: %w", err)
+	}
+
+	var payment Payment
+	if err := json.Unmarshal(respData, &payment); err != nil {
+		return nil, fmt.Errorf("PayLightningAddress: invalid response JSON: %w", err)
+	}
+	return &payment, nil
 }
 
 // PayVariableInvoice executes a payment to a given variable-amount lightning invoice.
