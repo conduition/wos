@@ -73,7 +73,7 @@ func ExampleWallet_PayLightningAddress() {
 		panic(err)
 	}
 
-	payment, err := wallet.PayLightningAddress(ctx, lnAddress, "", 0.00000001)
+	payment, err := wallet.PayLightningAddress(ctx, lnAddress, "", 1000)
 	if err != nil {
 		panic(err)
 	}
