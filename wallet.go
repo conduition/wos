@@ -411,8 +411,10 @@ func (wallet *Wallet) PayInvoice(ctx context.Context, invoice, description strin
 	})
 }
 
-// PayLightningAddress executes a payment of the given BTC amount to a
+// PayLightningAddress executes a payment of the given millisat amount to a
 // given lightning address. The description is stored in the WoS payment history.
+// Note the amount is in millisats (thousandths of a sat). To pay 5 sats, pass
+// 5000 as the amount.
 //
 // Returns ErrOutsideSendableRange if the amount to be sent is outside the receiver's
 // acceptable min/max sendable range.
@@ -423,7 +425,7 @@ func (wallet *Wallet) PayLightningAddress(
 	ctx context.Context,
 	lnAddress LightningAddress,
 	description string,
-	amount float64,
+	amountMillisat uint64,
 ) (*Payment, error) {
 	respData, err := wallet.PostRequest(ctx, "/api/v1/wallet/lnurl", map[string]any{
 		"address": lnAddress.LNURL(),
@@ -442,20 +444,20 @@ func (wallet *Wallet) PayLightningAddress(
 		return nil, fmt.Errorf("PayLightningAddress: invalid response JSON: %w", err)
 	}
 
-	if maxSendable := fromMillisat(lnPayResponseBody.MaxSendable); amount > maxSendable {
+	if amountMillisat > lnPayResponseBody.MaxSendable {
 		return nil, fmt.Errorf(
-			"PayLightningAddress: %w: exceeds maxSendable (%f BTC)",
-			ErrOutsideSendableRange, maxSendable,
+			"PayLightningAddress: %w: exceeds maxSendable (%d msat)",
+			ErrOutsideSendableRange, lnPayResponseBody.MaxSendable,
 		)
-	} else if minSendable := fromMillisat(lnPayResponseBody.MinSendable); amount < minSendable {
+	} else if amountMillisat < lnPayResponseBody.MinSendable {
 		return nil, fmt.Errorf(
-			"PayLightningAddress: %w: exceeds minSendable (%f BTC)",
-			ErrOutsideSendableRange, minSendable,
+			"PayLightningAddress: %w: exceeds minSendable (%d msat)",
+			ErrOutsideSendableRange, lnPayResponseBody.MinSendable,
 		)
 	}
 
 	respData, err = wallet.PostRequest(ctx, "/api/v1/wallet/lnPay", map[string]any{
-		"amount":   toMillisat(amount),
+		"amount":   amountMillisat,
 		"callback": lnPayResponseBody.Callback,
 	})
 	if err != nil {
